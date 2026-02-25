@@ -1,2 +1,209 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+"""
+tmdb_to_excel.py
+────────────────────────────────────────────────────────────────────────────
+Fetches popular movie data from The Movie Database (TMDB) API and writes a
+formatted Excel workbook with two sheets:
+  1. Movie Catalog  — all fetched movies with key metadata
+  2. Summary        — stats + top-5 table, all driven by Excel formulas
+
+Usage
+-----
+1. Get a free API key at https://developer.themoviedb.org
+2. Set it in the API_KEY constant below (or via env var TMDB_API_KEY).
+3. pip install requests openpyxl
+4. python tmdb_to_excel.py
+"""
+
+import os
+import requests
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+from datetime import datetime
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+BASE_URL = "https://api.themoviedb.org/3"
+API_KEY  = os.getenv("TMDB_API_KEY", "YOUR_API_KEY_HERE")  # ← put your key here
+OUTPUT   = "tmdb_movies.xlsx"
+PAGES    = 3   # 20 movies per page → 60 movies total
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def tmdb_get(endpoint: str, params: dict = None) -> dict:
+    """Make a GET request to the TMDB API."""
+    p = {"api_key": API_KEY, "language": "en-US", **(params or {})}
+    resp = requests.get(f"{BASE_URL}{endpoint}", params=p, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+# ── Fetch from TMDB ───────────────────────────────────────────────────────────
+def fetch_movies() -> list[dict]:
+    """Fetch popular movies (multiple pages) and resolve genre names."""
+    # Genre lookup
+    genre_map = {g["id"]: g["name"]
+                 for g in tmdb_get("/genre/movie/list")["genres"]}
+
+    movies = []
+    for page in range(1, PAGES + 1):
+        print(f"  Fetching page {page}/{PAGES}…")
+        for m in tmdb_get("/movie/popular", {"page": page})["results"]:
+            movies.append({
+                "ID":           m["id"],
+                "Title":        m.get("title", ""),
+                "Release Date": m.get("release_date", ""),
+                "Rating":       round(m.get("vote_average", 0), 1),
+                "Vote Count":   m.get("vote_count", 0),
+                "Popularity":   round(m.get("popularity", 0), 2),
+                "Genres":       ", ".join(genre_map.get(gid, "")
+                                          for gid in m.get("genre_ids", [])),
+                "Overview":     m.get("overview", ""),
+            })
+    return movies
+
+# ── Fallback: realistic mock data (used when API_KEY is not set) ──────────────
+MOCK_MOVIES = [
+    {"ID": 1022789, "Title": "Inside Out 2",           "Release Date": "2024-06-14", "Rating": 7.6, "Vote Count": 4821,  "Popularity": 1856.12, "Genres": "Animation, Family, Adventure", "Overview": "Teenager Riley's mind headquarters is suddenly taken over by a new and very different emotion."},
+    {"ID": 573435,  "Title": "Bad Boys: Ride or Die",  "Release Date": "2024-06-07", "Rating": 7.2, "Vote Count": 3109,  "Popularity": 1432.87, "Genres": "Action, Thriller, Crime",       "Overview": "Miami detectives Mike Lowrey and Marcus Burnett must deal with a dangerous enemy."},
+    {"ID": 653346,  "Title": "Kingdom of the Planet of the Apes", "Release Date": "2024-05-08", "Rating": 7.0, "Vote Count": 2876, "Popularity": 1210.44, "Genres": "Science Fiction, Adventure, Action", "Overview": "Many years after Caesar's reign, a new tyrannical ape leader builds his empire."},
+    {"ID": 748783,  "Title": "The Garfield Movie",     "Release Date": "2024-05-24", "Rating": 6.8, "Vote Count": 1523,  "Popularity": 980.33,  "Genres": "Animation, Comedy, Family",     "Overview": "Garfield and his father Vic go on a wild outdoor adventure."},
+    {"ID": 519182,  "Title": "Despicable Me 4",         "Release Date": "2024-07-03", "Rating": 6.7, "Vote Count": 1089,  "Popularity": 930.21,  "Genres": "Animation, Family, Comedy",     "Overview": "Gru and Lucy welcome a new member to the family and face a new villain."},
+    {"ID": 786892,  "Title": "Furiosa: A Mad Max Saga", "Release Date": "2024-05-24", "Rating": 7.8, "Vote Count": 3420,  "Popularity": 1120.65, "Genres": "Action, Adventure, Science Fiction", "Overview": "The origin story of renegade warrior Furiosa before her encounter with Mad Max."},
+    {"ID": 940551,  "Title": "Migration",               "Release Date": "2023-12-22", "Rating": 7.1, "Vote Count": 1842,  "Popularity": 823.47,  "Genres": "Animation, Adventure, Comedy",  "Overview": "A family of ducks convince their overprotective father to go on a migration adventure."},
+    {"ID": 823464,  "Title": "Godzilla x Kong: The New Empire", "Release Date": "2024-03-29", "Rating": 7.0, "Vote Count": 3512, "Popularity": 1504.29, "Genres": "Action, Science Fiction, Adventure", "Overview": "Two ancient titans forge an alliance to fight a greater enemy."},
+    {"ID": 1011985, "Title": "Kung Fu Panda 4",         "Release Date": "2024-03-08", "Rating": 6.9, "Vote Count": 2945,  "Popularity": 1230.88, "Genres": "Action, Animation, Comedy",     "Overview": "Po is chosen to become the Spiritual Leader of the Valley of Peace, and must find a new Dragon Warrior."},
+    {"ID": 945961,  "Title": "Alien: Romulus",          "Release Date": "2024-08-16", "Rating": 7.3, "Vote Count": 2100,  "Popularity": 1045.60, "Genres": "Horror, Science Fiction",       "Overview": "A group of young colonists come face to face with the most terrifying life form in the universe."},
+    {"ID": 1197306, "Title": "A Quiet Place: Day One",  "Release Date": "2024-06-28", "Rating": 7.0, "Vote Count": 1760,  "Popularity": 920.14,  "Genres": "Horror, Science Fiction, Thriller", "Overview": "A woman finds herself caught in New York City during the alien invasion."},
+    {"ID": 693134,  "Title": "Dune: Part Two",          "Release Date": "2024-03-01", "Rating": 8.3, "Vote Count": 5942,  "Popularity": 1688.44, "Genres": "Science Fiction, Adventure",    "Overview": "Paul Atreides unites with the Fremen to wage war against House Harkonnen."},
+    {"ID": 1136617, "Title": "Atlas",                   "Release Date": "2024-05-24", "Rating": 5.9, "Vote Count": 1254,  "Popularity": 765.33,  "Genres": "Action, Science Fiction",       "Overview": "An analyst bonds with an AI robot to defeat a rogue one."},
+    {"ID": 1029575, "Title": "The Idea of You",         "Release Date": "2024-05-02", "Rating": 7.0, "Vote Count": 980,   "Popularity": 698.21,  "Genres": "Romance, Drama",                "Overview": "A 40-year-old single mom starts an unexpected romance with a pop star."},
+    {"ID": 1011985, "Title": "Civil War",               "Release Date": "2024-04-12", "Rating": 7.1, "Vote Count": 2234,  "Popularity": 870.55,  "Genres": "Action, Drama, War",            "Overview": "Journalists travel across a war-torn America during a second civil war."},
+]
+
+# ── Excel helpers ─────────────────────────────────────────────────────────────
+BLUE_DARK    = "1A3C5E"
+BLUE_LIGHT   = "D6E8F7"
+ALT_ROW      = "EEF4FB"
+WHITE        = "FFFFFF"
+
+def hdr_style(cell, *, bg=BLUE_DARK, fg=WHITE):
+    cell.font      = Font(name="Arial", bold=True, color=fg, size=11)
+    cell.fill      = PatternFill("solid", start_color=bg)
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    cell.border    = thin_border()
+
+def thin_border(color="CCCCCC"):
+    s = Side(style="thin", color=color)
+    return Border(left=s, right=s, top=s, bottom=s)
+
+# ── Build Excel workbook ──────────────────────────────────────────────────────
+def build_workbook(movies: list[dict]) -> Workbook:
+    # Sort by rating desc
+    movies.sort(key=lambda m: m["Rating"], reverse=True)
+
+    wb = Workbook()
+
+    # ── Sheet 1: Movie Catalog ────────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "Movie Catalog"
+
+    COLS = ["ID", "Title", "Release Date", "Rating",
+            "Vote Count", "Popularity", "Genres", "Overview"]
+    COL_W = {"ID": 9, "Title": 36, "Release Date": 14, "Rating": 9,
+              "Vote Count": 12, "Popularity": 12, "Genres": 30, "Overview": 60}
+
+    # Header
+    ws.row_dimensions[1].height = 22
+    for c, h in enumerate(COLS, 1):
+        cell = ws.cell(row=1, column=c, value=h)
+        hdr_style(cell)
+
+    # Data
+    alt = PatternFill("solid", start_color=ALT_ROW)
+    for ri, movie in enumerate(movies, 2):
+        for ci, key in enumerate(COLS, 1):
+            cell = ws.cell(row=ri, column=ci, value=movie[key])
+            cell.font   = Font(name="Arial", size=10)
+            cell.border = thin_border()
+            if ri % 2 == 0:
+                cell.fill = alt
+            if key in ("ID", "Rating", "Vote Count", "Popularity"):
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            elif key == "Overview":
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                ws.row_dimensions[ri].height = 58
+            else:
+                cell.alignment = Alignment(vertical="center")
+
+    # Column widths & freeze
+    for ci, h in enumerate(COLS, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = COL_W[h]
+    ws.freeze_panes = "A2"
+
+    # ── Sheet 2: Summary ──────────────────────────────────────────────────────
+    ss = wb.create_sheet("Summary")
+    ss.column_dimensions["A"].width = 28
+    ss.column_dimensions["B"].width = 22
+    ss.column_dimensions["C"].width = 14
+
+    # Title block
+    ss["A1"] = "TMDB Popular Movies — Summary"
+    ss["A1"].font = Font(name="Arial", bold=True, size=14, color=BLUE_DARK)
+    ss["A2"] = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    ss["A2"].font = Font(name="Arial", size=9, italic=True, color="888888")
+
+    ss["A4"] = "Key Statistics"
+    ss["A4"].font = Font(name="Arial", bold=True, size=12, color=BLUE_DARK)
+
+    stat_fill = PatternFill("solid", start_color=BLUE_LIGHT)
+    stats = [
+        ("Total movies",        "=COUNTA('Movie Catalog'!B2:B10000)"),
+        ("Average rating",      "=AVERAGE('Movie Catalog'!D2:D10000)"),
+        ("Highest rating",      "=MAX('Movie Catalog'!D2:D10000)"),
+        ("Lowest rating",       "=MIN('Movie Catalog'!D2:D10000)"),
+        ("Total votes",         "=SUM('Movie Catalog'!E2:E10000)"),
+        ("Avg popularity",      "=AVERAGE('Movie Catalog'!F2:F10000)"),
+    ]
+    num_fmts = {"Average rating": "0.00", "Highest rating": "0.00",
+                "Lowest rating": "0.00", "Avg popularity": "#,##0.00",
+                "Total votes": "#,##0"}
+
+    for i, (label, formula) in enumerate(stats, 5):
+        lc = ss.cell(row=i, column=1, value=label)
+        vc = ss.cell(row=i, column=2, value=formula)
+        for c in (lc, vc):
+            c.font   = Font(name="Arial", size=10, bold=(c == lc))
+            c.fill   = stat_fill
+            c.border = thin_border()
+        vc.alignment = Alignment(horizontal="center")
+        if label in num_fmts:
+            vc.number_format = num_fmts[label]
+
+    ss["A12"] = "Top 5 by Rating"
+    ss["A12"].font = Font(name="Arial", bold=True, size=12, color=BLUE_DARK)
+
+    for ci, h in enumerate(["Title", "Rating", "Release Date"], 1):
+        hdr_style(ss.cell(row=13, column=ci))
+        ss.cell(row=13, column=ci, value=h)
+
+    for ri, movie in enumerate(movies[:5], 14):
+        ss.cell(row=ri, column=1, value=movie["Title"]).font  = Font(name="Arial", size=10)
+        rc = ss.cell(row=ri, column=2, value=movie["Rating"])
+        rc.font      = Font(name="Arial", size=10)
+        rc.alignment = Alignment(horizontal="center")
+        ss.cell(row=ri, column=3, value=movie["Release Date"]).font = Font(name="Arial", size=10)
+
+    return wb
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    if API_KEY in ("YOUR_API_KEY_HERE", ""):
+        print("⚠️  No TMDB API key found — using mock data for demonstration.")
+        print("   Set API_KEY or env var TMDB_API_KEY to fetch live data.\n")
+        movies = MOCK_MOVIES
+    else:
+        print("Connecting to TMDB API…")
+        movies = fetch_movies()
+
+    print(f"Processing {len(movies)} movies…")
+    wb = build_workbook(movies)
+    wb.save(OUTPUT)
+    print(f"✅  Saved → {OUTPUT}")
